@@ -14,11 +14,12 @@ import (
 )
 
 type Player struct {
-	Ctrl       *beep.Ctrl
-	SSC        beep.StreamSeekCloser
-	BFormat    beep.Format
-	Volume     *effects.Volume
-	SampleRate beep.SampleRate
+	Ctrl               *beep.Ctrl
+	SSC                beep.StreamSeekCloser
+	BFormat            beep.Format
+	Volume             *effects.Volume
+	InternalSampleRate beep.SampleRate
+	SampleRate         beep.SampleRate
 }
 
 func (p *Player) Play(s *Song) (int, error) {
@@ -35,6 +36,7 @@ func (p *Player) Play(s *Song) (int, error) {
 		p.SSC, p.BFormat, err = mp3.Decode(f)
 	case ".ogg", ".weba", ".webm":
 		p.SSC, p.BFormat, err = vorbis.Decode(f)
+		// FIXME: flac seek() method not implemented, see "github.com/faiface/beep/flac/decode.go"
 	case ".flac":
 		p.SSC, p.BFormat, err = flac.Decode(f)
 	default:
@@ -44,16 +46,21 @@ func (p *Player) Play(s *Song) (int, error) {
 		return 0, err
 	}
 	if p.SampleRate == 0 {
+		p.InternalSampleRate = p.BFormat.SampleRate
 		p.SampleRate = p.BFormat.SampleRate
 		err = speaker.Init(p.SampleRate, p.SampleRate.N(time.Second/10))
 		if err != nil {
 			return 0, err
 		}
 	}
-	// TODO: Resample is only a Streamer, not a StreamSeekCloser
-	// resampled := beep.Resample(4, p.BFormat.SampleRate, p.SampleRate, p.SSC)
+	if p.BFormat.SampleRate != p.SampleRate {
+		// TODO: Resample is only a Streamer, not a StreamSeekCloser
+		resampled := beep.Resample(4, p.BFormat.SampleRate, p.InternalSampleRate, p.SSC)
+		p.Volume.Streamer = resampled
+	} else {
+		p.Volume.Streamer = p.SSC
+	}
 	p.SampleRate = p.BFormat.SampleRate
-	p.Volume.Streamer = p.SSC
 	p.Ctrl = &beep.Ctrl{Streamer: p.Volume}
 	speaker.Play(p.Ctrl)
 	return int(float32(p.SSC.Len()) / float32(p.BFormat.SampleRate)), nil

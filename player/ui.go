@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/gizak/termui/v3"
 	"github.com/gizak/termui/v3/widgets"
+	"math/rand"
 	"time"
 )
 
@@ -27,6 +28,9 @@ type Ui struct {
 	songPos int
 	songLen int
 
+	// next song
+	nextFlag uint8 // 0: sequential, 1: single, 2: random
+
 	OnSelect selectCallback
 	OnPause  pauseCallback
 	OnSeek   seekCallback
@@ -41,6 +45,8 @@ func NewUi(songList []*Song, pathPrefix int) error {
 		return err
 	}
 	defer termui.Close()
+
+	rand.Seed(time.Now().Unix())
 
 	ui := new(Ui)
 	ui.OnSelect = playerSgt.Play
@@ -84,6 +90,8 @@ func NewUi(songList []*Song, pathPrefix int) error {
 	ui.controlsPar.Text = "[ Enter ](fg:black,bg:white)[Select](fg:black,bg:green) " +
 		"[ p ](fg:black,bg:white)[Play/Pause](fg:black,bg:green) " +
 		"[Esc](fg:black,bg:white)[Stop](fg:black,bg:green) " +
+		"[ r ](fg:black,bg:white)[Random](fg:black,bg:green) " +
+		"[ s ](fg:black,bg:white)[Single](fg:black,bg:green) " +
 		"[Right](fg:black,bg:white)[+10s](fg:black,bg:green) " +
 		"[Left](fg:black,bg:white)[-10s](fg:black,bg:green) " +
 		"[ + ](fg:black,bg:white)[+Volume](fg:black,bg:green) " +
@@ -111,6 +119,20 @@ func NewUi(songList []*Song, pathPrefix int) error {
 			switch e.ID {
 			case "q", "<C-c>":
 				return nil
+			case "r":
+				if ui.nextFlag == 2 {
+					ui.nextFlag = 0
+				} else {
+					ui.nextFlag = 2
+				}
+				ui.updateSongInfo()
+			case "s":
+				if ui.nextFlag == 1 {
+					ui.nextFlag = 0
+				} else {
+					ui.nextFlag = 1
+				}
+				ui.updateSongInfo()
 			case "<Up>":
 				ui.playList.ScrollUp()
 			case "<Down>":
@@ -129,18 +151,31 @@ func NewUi(songList []*Song, pathPrefix int) error {
 					}
 					ui.updateStatus()
 				}
+			case "<Escape>":
+				ui.OnPause(true)
+				ui.state = Stopped
+				ui.scrollerGauge.Title = "Stopped"
+				ui.scrollerGauge.TitleStyle.Bg = termui.ColorRed
+				ui.scrollerGauge.Percent = 0
+				ui.scrollerGauge.Label = "0:00 / 0:00"
 			case "<Left>":
 				if ui.songNum != -1 {
 					ui.songPos -= 10
 					if ui.songPos < 0 {
 						ui.songPos = 0
 					}
-					_ = ui.OnSeek(ui.songPos)
+					if err := ui.OnSeek(ui.songPos); err != nil {
+						ui.infoList.Rows = append(ui.infoList.Rows,
+							fmt.Sprintf("[Error:](fg:red)   %s", err.Error()))
+					}
 				}
 			case "<Right>":
 				if ui.songNum != -1 {
 					ui.songPos += 10
-					_ = ui.OnSeek(ui.songPos)
+					if err := ui.OnSeek(ui.songPos); err != nil {
+						ui.infoList.Rows = append(ui.infoList.Rows,
+							fmt.Sprintf("[Error:](fg:red)   %s", err.Error()))
+					}
 				}
 			case "=", "+":
 				ui.volumeUp()
@@ -193,22 +228,37 @@ func (ui *Ui) render() {
 
 func (ui *Ui) updateSongInfo() {
 	if ui.songNum != -1 {
-		lyrics := ui.songs[ui.songNum].Meta.Lyrics()
-		trackNum, _ := ui.songs[ui.songNum].Meta.Track()
-		ui.infoList.Rows = []string{
-			"[Artist:](fg:green) " + ui.songs[ui.songNum].Meta.Artist(),
-			"[Title:](fg:green)  " + ui.songs[ui.songNum].Meta.Title(),
-			"[Album:](fg:green)  " + ui.songs[ui.songNum].Meta.Album(),
-			fmt.Sprintf("[Track:](fg:green)  %d", trackNum),
-			"[Genre:](fg:green)  " + ui.songs[ui.songNum].Meta.Genre(),
-			fmt.Sprintf("[Year:](fg:green)   %d", ui.songs[ui.songNum].Meta.Year()),
-			fmt.Sprintf("[SampleRate:](fg:green)   %d", playerSgt.SampleRate),
+		var nextStr string
+		switch ui.nextFlag {
+		case 0:
+			nextStr = "Sequential"
+		case 1:
+			nextStr = "Single"
+		case 2:
+			nextStr = "Random"
 		}
-		if lyrics != "" {
-			ui.infoList.Rows = append(ui.infoList.Rows, "Lyrics:  "+lyrics)
+		if ui.songs[ui.songNum].Meta != nil {
+			lyrics := ui.songs[ui.songNum].Meta.Lyrics()
+			trackNum, _ := ui.songs[ui.songNum].Meta.Track()
+			ui.infoList.Rows = []string{
+				"[Artist:](fg:green) " + ui.songs[ui.songNum].Meta.Artist(),
+				"[Title:](fg:green)  " + ui.songs[ui.songNum].Meta.Title(),
+				"[Album:](fg:green)  " + ui.songs[ui.songNum].Meta.Album(),
+				fmt.Sprintf("[Track:](fg:green)  %d", trackNum),
+				"[Genre:](fg:green)  " + ui.songs[ui.songNum].Meta.Genre(),
+				fmt.Sprintf("[Year:](fg:green)   %d", ui.songs[ui.songNum].Meta.Year()),
+				fmt.Sprintf("[SampleRate:](fg:green)   %d", playerSgt.SampleRate),
+				fmt.Sprintf("[Next Order:](fg:green)   %s", nextStr),
+			}
+			if lyrics != "" {
+				ui.infoList.Rows = append(ui.infoList.Rows, "Lyrics:  "+lyrics)
+			}
+		} else {
+			ui.infoList.Rows = []string{"No song info",
+				fmt.Sprintf("[SampleRate:](fg:green)   %d", playerSgt.SampleRate),
+				fmt.Sprintf("[Next Order:](fg:green)   %s", nextStr),
+			}
 		}
-	} else {
-		ui.infoList.Rows = []string{"error to display song's info"}
 	}
 }
 
@@ -247,14 +297,30 @@ func (ui *Ui) updateGauge() {
 		ui.scrollerGauge.Percent = int(float32(ui.songPos) / float32(ui.songLen) * 100)
 		ui.scrollerGauge.Label = fmt.Sprintf("%d:%.2d / %d:%.2d", ui.songPos/60, ui.songPos%60, ui.songLen/60, ui.songLen%60)
 		if ui.scrollerGauge.Percent >= 100 {
-			ui.songNum++
-			ui.playList.ScrollAmount(1)
-			// return to top
-			if ui.songNum >= len(ui.songs) {
-				ui.songNum = 0
-				ui.playList.ScrollTop()
-			}
+			lastNum := ui.songNum
+			ui.songNum = ui.nextSongNum(lastNum)
+			ui.playList.ScrollAmount(ui.songNum - lastNum)
 			ui.playSong(ui.songNum)
 		}
+	}
+}
+
+func (ui *Ui) nextSongNum(current int) int {
+	switch ui.nextFlag {
+	// sequential
+	case 0:
+		current++
+		if current >= len(ui.songs) {
+			current = 0
+		}
+		return current
+	// single
+	case 1:
+		return current
+	// random
+	case 2:
+		return rand.Intn(len(ui.songNames))
+	default:
+		return 0
 	}
 }
