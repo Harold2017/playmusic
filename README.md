@@ -2,6 +2,8 @@
 
 ## play music with cmd UI
 
+![img](img.png)
+
 ```sh
 ➜  playmusic go run main.go -h   
 playmusic tool in golang to play music from cmd
